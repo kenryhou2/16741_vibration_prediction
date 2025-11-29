@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+
+
 """
 Convert a rosbag2 into NumPy arrays for ML and plotting.
 
@@ -65,6 +67,8 @@ import matplotlib.pyplot as plt
 import rclpy
 from rclpy.serialization import deserialize_message
 from rosidl_runtime_py.utilities import get_message
+from scipy.spatial.transform import Rotation as R, Slerp
+from scipy.interpolate import CubicSpline
 
 import rosbag2_py
 
@@ -483,6 +487,111 @@ def extract_rigidbody_pose_within_window(
         "rb_name": np.array(rb_name, dtype=object),
     }
 
+# =========================
+# Reference trajectory loading and interpolation
+# =========================
+from scipy.interpolate import CubicSpline
+# from scipy.spatial.transform import Rotation as R, Slerp  # <-- no longer needed if you don't use rotations anywhere else
+
+def load_and_interpolate_reference_trajectory(
+    csv_path: str,
+    target_time_rel: np.ndarray
+) -> Dict[str, np.ndarray]:
+    """
+    Load reference trajectory positions from CSV and interpolate onto target_time_rel.
+
+    - NO explicit time column is used.
+    - NO synthetic time axis (Hz-based) is constructed.
+    - We parameterize the CSV samples by a normalized parameter alpha in [0,1].
+    - We fit cubic splines x(alpha), y(alpha), z(alpha).
+    - We map target_time_rel linearly into [0,1] based on its own min/max and
+      sample the splines at those alphas.
+
+    Assumptions:
+      - The reference CSV covers the same logical start/end as target_time_rel.
+      - The ordering of rows in the CSV follows the trajectory in time.
+
+    Returns:
+        {
+            "ref_time_rel": target_time_rel,   # same grid as TCP
+            "ref_position": (N,3) array,       # interpolated XYZ
+            # "ref_orientation_xyzw": ...      # (disabled / not computed)
+        }
+    """
+    if not os.path.isfile(csv_path):
+        raise FileNotFoundError(f"Reference CSV '{csv_path}' not found.")
+
+    data = np.genfromtxt(csv_path, delimiter=",", names=True)
+    if data.dtype.names is None:
+        raise RuntimeError(
+            f"CSV '{csv_path}' has no header row; please add one."
+        )
+
+    names = data.dtype.names
+    M = len(data)
+
+    if M < 2:
+        raise RuntimeError(f"Reference CSV '{csv_path}' must have at least 2 samples, got {M}.")
+
+    # --- Position columns (your file has x, y, z, px, py, pz, pw, u) ---
+    pos_candidates = [
+        ("x", "y", "z"),
+        ("px", "py", "pz"),  # fallback, if needed
+    ]
+    pos_cols = None
+    for cand in pos_candidates:
+        if all(c in names for c in cand):
+            pos_cols = cand
+            break
+    if pos_cols is None:
+        raise RuntimeError(f"Could not find any position columns among {names}")
+
+    pos_ref = np.vstack([np.asarray(data[c], dtype=np.float64) for c in pos_cols]).T  # (M,3)
+
+    # --- Normalized parameter alpha for reference samples ---
+    # alpha_ref: 0 at first row, 1 at last row
+    alpha_ref = np.linspace(0.0, 1.0, M, dtype=np.float64)  # (M,)
+
+    # --- Map target_time_rel to the same normalized [0,1] range ---
+    t_min = float(target_time_rel[0])
+    t_max = float(target_time_rel[-1])
+    if t_max <= t_min:
+        raise RuntimeError(
+            f"target_time_rel must be strictly increasing; got t_min={t_min}, t_max={t_max}"
+        )
+
+    alpha_query = (target_time_rel - t_min) / (t_max - t_min)  # (N,)
+    # You can optionally clip small numerical overshoots:
+    # alpha_query = np.clip(alpha_query, 0.0, 1.0)
+
+    # --- Fit cubic splines in alpha and sample at alpha_query ---
+    cs_x = CubicSpline(alpha_ref, pos_ref[:, 0], extrapolate=False)
+    cs_y = CubicSpline(alpha_ref, pos_ref[:, 1], extrapolate=False)
+    cs_z = CubicSpline(alpha_ref, pos_ref[:, 2], extrapolate=False)
+
+    x_interp = cs_x(alpha_query)
+    y_interp = cs_y(alpha_query)
+    z_interp = cs_z(alpha_query)
+    pos_interp = np.vstack([x_interp, y_interp, z_interp]).T  # (N,3)
+
+    # --- Orientation interpolation (DISABLED) ---
+    # If you ever want to re-enable this:
+    #   - Detect quaternion columns (e.g., pw, px, py, pz).
+    #   - Convert to xyzw.
+    #   - Parameterize them by alpha_ref.
+    #   - Use a custom SLERP over alpha.
+    #
+    # For now, we explicitly skip this and only return positions.
+
+    return {
+        "ref_time_rel": target_time_rel,
+        "ref_position": pos_interp,
+        # "ref_orientation_xyzw": quat_interp_xyzw,  # commented out on purpose
+    }
+
+
+
+
 
 # =========================
 # Query helpers for joints
@@ -506,6 +615,9 @@ def interpolate_joint_at_time(data: Dict[str, np.ndarray], joint_name: str, t_qu
     if t_query < t[0] or t_query > t[-1]:
         raise ValueError(f"t_query={t_query} is outside time range [{t[0]}, {t[-1]}]")
     return float(np.interp(t_query, t, pos))
+
+
+
 
 
 # =========================
@@ -543,11 +655,20 @@ def plot_joint_positions(data: Dict[str, np.ndarray], title: str = "Joint Positi
     plt.show()
 
 
-def plot_pose_6d(time_rel: np.ndarray, pos: np.ndarray, rpy: np.ndarray, title: str):
+def plot_pose_6d(
+    time_rel: np.ndarray,
+    pos: np.ndarray,
+    rpy: np.ndarray,
+    title: str,
+    ref_pos: np.ndarray = None,
+):
     """
     Make 6 subplots:
         x, y, z, roll, pitch, yaw over time.
-    pos: (N,3), rpy: (N,3)
+
+    pos: (N,3)  - TCP position
+    rpy: (N,3)  - TCP roll, pitch, yaw
+    ref_pos: (N,3) or None - reference position to overlay on x,y,z
     """
     fig, axes = plt.subplots(3, 2, sharex=True, figsize=(10, 8))
     fig.suptitle(title)
@@ -559,14 +680,82 @@ def plot_pose_6d(time_rel: np.ndarray, pos: np.ndarray, rpy: np.ndarray, title: 
         row = i // 2
         col = i % 2
         ax = axes[row, col]
-        ax.plot(time_rel, data_series[i])
+
+        # Always plot TCP
+        ax.plot(time_rel, data_series[i], label="TCP")
+
+        # For the first three (x,y,z), optionally overlay reference
+        if ref_pos is not None and i < 3:
+            ax.plot(time_rel, ref_pos[:, i], linestyle="--", label="Reference")
+
         ax.set_ylabel(labels[i])
         ax.grid(True)
+
+        # Only put legend on the first subplot if ref is present
+        if ref_pos is not None and i == 0:
+            ax.legend()
 
     axes[-1, 0].set_xlabel("time [s]")
     axes[-1, 1].set_xlabel("time [s]")
     plt.tight_layout()
     plt.show()
+
+
+def plot_pose_overlay_6d(
+    time_rel: np.ndarray,
+    tcp_pos: np.ndarray,
+    tcp_rpy: np.ndarray,
+    ref_pos: np.ndarray,
+    ref_rpy: np.ndarray,
+    title: str = "TCP vs Reference Pose"
+):
+    """
+    Overlay TCP pose and reference pose in 6 subplots:
+        x, y, z, roll, pitch, yaw vs time.
+
+    All arrays are shape (N,3), time_rel is (N,).
+    """
+    fig, axes = plt.subplots(3, 2, sharex=True, figsize=(10, 8))
+    fig.suptitle(title)
+
+    labels = ["x [m]", "y [m]", "z [m]", "roll [rad]", "pitch [rad]", "yaw [rad]"]
+
+    tcp_series = [
+        tcp_pos[:, 0],
+        tcp_pos[:, 1],
+        tcp_pos[:, 2],
+        tcp_rpy[:, 0],
+        tcp_rpy[:, 1],
+        tcp_rpy[:, 2],
+    ]
+
+    ref_series = [
+        ref_pos[:, 0],
+        ref_pos[:, 1],
+        ref_pos[:, 2],
+        ref_rpy[:, 0],
+        ref_rpy[:, 1],
+        ref_rpy[:, 2],
+    ]
+
+    for i in range(6):
+        row = i // 2
+        col = i % 2
+        ax = axes[row, col]
+
+        ax.plot(time_rel, tcp_series[i], label="TCP")
+        ax.plot(time_rel, ref_series[i], linestyle="--", label="Reference")
+        ax.set_ylabel(labels[i])
+        ax.grid(True)
+
+        if row == 0 and col == 0:
+            ax.legend()
+
+    axes[-1, 0].set_xlabel("time [s]")
+    axes[-1, 1].set_xlabel("time [s]")
+    plt.tight_layout()
+    plt.show()
+
 
 
 # =========================
@@ -600,6 +789,10 @@ def main():
                     help="Seconds to subtract from start of time window (can be negative).")
     parser.add_argument("--end-offset", type=float, default=0.0,
                         help="Seconds to add to end of time window (can be negative).")
+    parser.add_argument("--ref-csv", default=None,
+                        help="Optional CSV file with reference trajectory (t, x, y, z, quaternion wxyz). "
+                             "Will be interpolated to the TCP time grid.")
+
 
 
     args = parser.parse_args()
@@ -671,8 +864,21 @@ def main():
                 "tcp_rpy": tcp_pose_data["rpy"],
                 "tcp_frame_ids": tcp_pose_data["frame_ids"],
             })
+
+            # --- Reference trajectory  ---
+            if args.ref_csv is not None:
+                print(f"[INFO] Loading and interpolating reference trajectory from '{args.ref_csv}'...")
+                ref_data = load_and_interpolate_reference_trajectory(
+                    args.ref_csv,
+                    target_time_rel=tcp_pose_data["time_rel"]
+                )
+                all_data.update(ref_data)
+                print(f"[INFO] Reference position shape: {ref_data['ref_position'].shape}")
+                # print(f"[INFO] Reference orientation shape: {ref_data['ref_orientation_xyzw'].shape}")
+
         except RuntimeError as e:
             print(f"[WARN] TCP pose extraction skipped: {e}")
+
 
         # --- TCP twist ---
         tcp_twist_data = None
@@ -749,8 +955,16 @@ def main():
                 plot_pose_6d(rb_data["time_rel"], rb_data["position"], rb_data["rpy"], title=title_rb)
 
             if tcp_pose_data is not None:
+                # If we have a reference trajectory, pass its positions; otherwise None
+                ref_pos = all_data["ref_position"] if "ref_position" in all_data else None
                 title_tcp = "TCP pose (cmd → status window)"
-                plot_pose_6d(tcp_pose_data["time_rel"], tcp_pose_data["position"], tcp_pose_data["rpy"], title=title_tcp)
+                plot_pose_6d(
+                    tcp_pose_data["time_rel"],
+                    tcp_pose_data["position"],
+                    tcp_pose_data["rpy"],
+                    title=title_tcp,
+                    ref_pos=ref_pos,
+                )
 
     finally:
         rclpy.shutdown()

@@ -1,3 +1,7 @@
+# ROS2 Bag TF Tree reconstruction:
+Usage: From the scripts directory,
+```python3 bag_tf.py --bag ../../data/data_collection_11252025/chirp1/rosbag2_2025_11_25-19_24_21/ --source-frame surface --target-frame vicon_base --tf-time-offset```
+
 # ROS2 Bag Parser for UR Joint States, TCP Pose/Twist, and Mocap Rigid Bodies
 
 This script converts a **ROS2 rosbag2** (e.g., `.mcap`) into structured **NumPy arrays** for

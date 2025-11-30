@@ -29,6 +29,53 @@ python3 bag_parse.py <rosbag_directory> \
     --plot
 ```
 ---
+## Usage notes per data run:
+```bash
+Data offsets; 
+
+Chirp 1: hkou@UBE-CARBON:~/Courses/16741_Manipulation_Erickson/project/16741_vibration_prediction/scripts$ python3 bag_parse.py ../data/../../data/data_collection_11252025/chirp1/rosbag2_2025_11_25-19_24_21 --start-offset -0.98 --end-offset 0.10823 --plot --output data_chirp1_11292025.npz --ref-csv ../data/chirp1/ref_traj_chirp_clean.csv --linear 
+
+Start offset: -2 + 1.08 = -0.92 
+
+End Offset: 32.77067 - 31.8789 = 0.89177 = 1 – 0.89177= 0.10823 
+
+ 
+
+ 
+
+[Deprecated] Cylinder1: hkou@UBE-CARBON:~/Courses/16741_Manipulation_Erickson/project/16741_vibration_prediction/scripts$ python3 bag_parse.py ../data/../../data/data_collection_11252025/cylinder_run1/rosbag2_2025_11_25-18_47_41/ --plot --output data_cylinder_11292025.npz --ref-csv ../data/cylinder1/ref_traj_cylinder_clean.csv --start-offset -0.92 --end-offset 0.02233  
+
+Start offset: –2 + 1 = -1 
+
+End offset: 2 – 1.97767 = 0.02233 
+
+17.57887 - 15.6012 = 1.97767 
+
+ 
+
+ Cylinder2: hkou@UBE-CARBON:~/Courses/16741_Manipulation_Erickson/project/16741_vibration_prediction/scripts$ python3 bag_parse.py ../data/../../data/data_collection_11252025/cylinder_run2/rosbag2_2025_11_25-19_14_51/ --plot --output data_cylinder2_11292025.npz --ref-csv ../data/cylinder2/ref_traj_cylinder_clean.csv --start-offset -0.7974 --end-offset 0.02559 
+
+Start offset: -2 + 1.1471 + 0.0555 = -0.7974 
+
+End offset: 2 - (17.675310 - 15.7009) = 0.02559 
+
+ 
+
+Cylinder3: python3 bag_parse.py ../data/../../data/data_collection_11252025/cylinder_run3/rosbag2_2025_11_25-19_16_11/ --plot --output data_cylinder3_11292025.npz --ref-csv ../data/cylinder3/ref_traj_cylinder_clean.csv --start-offset 0.1545 --end-offset 0.005 
+
+Start offset: -2 + 2.017 + 0.087 0.0505= 0.1545 
+
+End offset: 2 - (18.56- 16.565) = 0.005 
+
+ 
+
+Linear1: python3 bag_parse.py ../data/../../data/data_collection_11252025/linear_run1/rosbag2_2025_11_25-19_27_33/ --plot --output data_linear1_11292025.npz --ref-csv ../data/linear1/ref_traj_linear_clean.csv --start-offset -0.9717 --end-offset 0.0103 --linear 
+
+Start offset: -2 + 1.0283 = -0.9717 
+
+End offset: 2 - (18.0571- 16.0674) = 0.0103 
+```
+---
 
 ## ✨ Features
 

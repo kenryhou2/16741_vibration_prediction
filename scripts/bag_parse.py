@@ -67,7 +67,7 @@ from rclpy.serialization import deserialize_message
 from rosidl_runtime_py.utilities import get_message
 from scipy.spatial.transform import Rotation as R, Slerp
 from scipy.interpolate import CubicSpline
-from bag_tf import BagTFGraph
+from bag_tf import BagTFGraph, _get_tf_message_at_offset, _transform_to_matrix
 import rosbag2_py
 
 
@@ -512,102 +512,6 @@ def extract_rigidbody_pose_within_window(
 # Reference trajectory loading and interpolation
 # =========================
 
-# def load_and_interpolate_reference_trajectory(
-#     csv_path: str,
-#     target_time_rel: np.ndarray
-# ) -> Dict[str, np.ndarray]:
-#     """
-#     Load reference trajectory positions from CSV and interpolate onto target_time_rel.
-
-#     - NO explicit time column is used.
-#     - NO synthetic time axis (Hz-based) is constructed.
-#     - We parameterize the CSV samples by a normalized parameter alpha in [0,1].
-#     - We fit cubic splines x(alpha), y(alpha), z(alpha).
-#     - We map target_time_rel linearly into [0,1] based on its own min/max and
-#       sample the splines at those alphas.
-
-#     Assumptions:
-#       - The reference CSV covers the same logical start/end as target_time_rel.
-#       - The ordering of rows in the CSV follows the trajectory in time.
-
-#     Returns:
-#         {
-#             "ref_time_rel": target_time_rel,   # same grid as TCP
-#             "ref_position": (N,3) array,       # interpolated XYZ
-#             # "ref_orientation_xyzw": ...      # (disabled / not computed)
-#         }
-#     """
-#     if not os.path.isfile(csv_path):
-#         raise FileNotFoundError(f"Reference CSV '{csv_path}' not found.")
-
-#     data = np.genfromtxt(csv_path, delimiter=",", names=True)
-#     if data.dtype.names is None:
-#         raise RuntimeError(
-#             f"CSV '{csv_path}' has no header row; please add one."
-#         )
-
-#     names = data.dtype.names
-#     M = len(data)
-
-#     if M < 2:
-#         raise RuntimeError(f"Reference CSV '{csv_path}' must have at least 2 samples, got {M}.")
-
-#     # --- Position columns (your file has x, y, z, px, py, pz, pw, u) ---
-#     pos_candidates = [
-#         ("x", "y", "z"),
-#         ("px", "py", "pz"),  # fallback, if needed
-#     ]
-#     pos_cols = None
-#     for cand in pos_candidates:
-#         if all(c in names for c in cand):
-#             pos_cols = cand
-#             break
-#     if pos_cols is None:
-#         raise RuntimeError(f"Could not find any position columns among {names}")
-
-#     pos_ref = np.vstack([np.asarray(data[c], dtype=np.float64) for c in pos_cols]).T  # (M,3)
-
-#     # --- Normalized parameter alpha for reference samples ---
-#     # alpha_ref: 0 at first row, 1 at last row
-#     alpha_ref = np.linspace(0.0, 1.0, M, dtype=np.float64)  # (M,)
-
-#     # --- Map target_time_rel to the same normalized [0,1] range ---
-#     t_min = float(target_time_rel[0])
-#     t_max = float(target_time_rel[-1])
-#     if t_max <= t_min:
-#         raise RuntimeError(
-#             f"target_time_rel must be strictly increasing; got t_min={t_min}, t_max={t_max}"
-#         )
-
-#     alpha_query = (target_time_rel - t_min) / (t_max - t_min)  # (N,)
-#     # You can optionally clip small numerical overshoots:
-#     # alpha_query = np.clip(alpha_query, 0.0, 1.0)
-
-#     # --- Fit cubic splines in alpha and sample at alpha_query ---
-#     cs_x = CubicSpline(alpha_ref, pos_ref[:, 0], extrapolate=False)
-#     cs_y = CubicSpline(alpha_ref, pos_ref[:, 1], extrapolate=False)
-#     cs_z = CubicSpline(alpha_ref, pos_ref[:, 2], extrapolate=False)
-
-#     x_interp = cs_x(alpha_query)
-#     y_interp = cs_y(alpha_query)
-#     z_interp = cs_z(alpha_query)
-#     pos_interp = np.vstack([x_interp, y_interp, z_interp]).T  # (N,3)
-
-#     # --- Orientation interpolation (DISABLED) ---
-#     # If you ever want to re-enable this:
-#     #   - Detect quaternion columns (e.g., pw, px, py, pz).
-#     #   - Convert to xyzw.
-#     #   - Parameterize them by alpha_ref.
-#     #   - Use a custom SLERP over alpha.
-#     #
-#     # For now, we explicitly skip this and only return positions.
-
-#     return {
-#         "ref_time_rel": target_time_rel,
-#         "ref_position": pos_interp,
-#         # "ref_orientation_xyzw": quat_interp_xyzw,  # commented out on purpose
-#     }
-
 def load_and_interpolate_reference_trajectory(
     csv_path: str,
     target_time_rel: np.ndarray,
@@ -618,28 +522,41 @@ def load_and_interpolate_reference_trajectory(
     ur_base_frame: str = "UR_base",
     surface_frame: str = "surface",
     ideal_surface_frame: Optional[str] = None,
+    linear_surface: bool = False,  
 ) -> Dict[str, np.ndarray]:
     """
     Load reference trajectory from CSV, optionally transform it using TF from a bag,
     then interpolate onto target_time_rel.
 
     TF usage (if bag_path is provided):
-        1) Build TF graph from bag (static + /tf snapshot at tf_time_offset).
-        2) Extract:
-            vicon_base_to_UR_base   = TF(vicon_base_frame -> ur_base_frame)
-            vicon_base_to_surface   = TF(vicon_base_frame -> surface_frame)
-            UR_base_to_actual_surface =
-                inv(vicon_base_to_UR_base) @ vicon_base_to_surface
+        - Preferred path:
+            1) Build TF graph from bag (static + /tf snapshot).
+            2) Extract:
+                vicon_base_to_UR_base   = TF(ur_base_frame -> vicon_base_frame)
+                vicon_base_to_surface   = TF(surface_frame -> vicon_base_frame)
+                UR_base_to_actual_surface =
+                    inv(vicon_base_to_UR_base) @ vicon_base_to_surface   # same as current code
 
-        3) Extract ideal_surface_to_UR_base:
-            - If ideal_surface_frame is None, assume it is surface_frame.
-            - UR_base_to_ideal_surface = TF(ur_base_frame -> ideal_surface_frame)
-            - ideal_surface_to_UR_base = inv(UR_base_to_ideal_surface)
+            3) Ideal surface:
+                - If linear_surface is True:
+                    use hardcoded "linear" UR_base_to_surface.
+                - Else if ideal_surface_frame is given:
+                    UR_base_to_ideal_surface = TF(ideal_surface_frame -> ur_base_frame)
+                - Else:
+                    use hardcoded "chirp" UR_base_to_surface.
 
-        4) For each CSV pose, build T from (pos, quat) and apply:
-               new_T = UR_base_to_actual_surface @ ideal_surface_to_UR_base @ T
-           Then use new_T's position (and orientation, if available) as the
-           "transformed reference" before interpolation.
+                ideal_surface_to_UR_base = inv(UR_base_to_ideal_surface)
+
+        - Failsafe path (e.g. no /tf_static):
+            1) vicon_base_to_UR_base from hardcoded YAML (vicon -> UR),
+               then invert to match variable semantics.
+            2) vicon_base_to_surface from /tf snapshot at tf_time_offset.
+            3) UR_base_to_actual_surface = inv(vicon_base_to_UR_base) @ vicon_base_to_surface.
+            4) UR_base_to_ideal_surface (static) from either chirp or linear.
+               ideal_surface_to_UR_base = inv(UR_base_to_ideal_surface).
+
+        For each CSV pose, build T from (pos, quat) and apply:
+            new_T = UR_base_to_actual_surface @ ideal_surface_to_UR_base @ T
 
     Interpolation:
         - Parameterize the (transformed) reference samples by alpha in [0,1].
@@ -698,76 +615,121 @@ def load_and_interpolate_reference_trajectory(
         quat_ref = np.vstack([np.asarray(data[c], dtype=np.float64) for c in quat_cols]).T  # (M,4)
 
     # ------------------------------------------------------------------
-    # 1) If a bag_path is provided, build TF graph & apply transforms
+    # 1) Build UR_base_to_actual_surface & ideal_surface_to_UR_base
     # ------------------------------------------------------------------
+    UR_base_to_actual_surface = None
+    ideal_surface_to_UR_base = None
+
     if bag_path is not None:
-        # Build TF tree (static + optional dynamic snapshot)
-        tf_graph = BagTFGraph.from_bag(
-            bag_path,
-            tf_static_topic="/tf_static",
-            tf_topic="/tf",
-            tf_time_offset=tf_time_offset,
-        )
+        try:
+            # Preferred: use full TF graph
+            tf_graph = BagTFGraph.from_bag(
+                bag_path,
+                tf_static_topic="/tf_static",
+                tf_topic="/tf",
+                tf_time_offset=tf_time_offset,
+            )
 
-        # vicon_base -> UR_base and vicon_base -> surface
-        vicon_base_to_UR_base = tf_graph.lookup_transform(ur_base_frame, vicon_base_frame)
-        vicon_base_to_surface = tf_graph.lookup_transform(surface_frame, vicon_base_frame)
-        # Print for debugging
-        R_vicon_to_UR = vicon_base_to_UR_base[:3, :3]
-        q_vicon_to_UR = R.from_matrix(R_vicon_to_UR).as_quat()
-        t_vicon_to_UR = vicon_base_to_UR_base[:3, 3]
-        R_vicon_to_surf = vicon_base_to_surface[:3, :3]
-        q_vicon_to_surf = R.from_matrix(R_vicon_to_surf).as_quat()
-        t_vicon_to_surf = vicon_base_to_surface[:3, 3]
-        print(f"TF {vicon_base_frame} <- {ur_base_frame}:")
-        print(f" q={q_vicon_to_UR}")
-        print(f" t={t_vicon_to_UR}")
-        print(f"TF {vicon_base_frame} <- {surface_frame}:")
-        print(f" q={q_vicon_to_surf}")
-        print(f" t={t_vicon_to_surf}")
+            # vicon_base <- ur_base, vicon_base <- surface  (same as your current code)
+            vicon_base_to_UR_base = tf_graph.lookup_transform(ur_base_frame, vicon_base_frame)
+            vicon_base_to_surface = tf_graph.lookup_transform(surface_frame, vicon_base_frame)
+            UR_base_to_surface = tf_graph.lookup_transform(surface_frame, ur_base_frame)
+            # Print for debugging
+            R_vicon_to_UR = vicon_base_to_UR_base[:3, :3]
+            q_vicon_to_UR = R.from_matrix(R_vicon_to_UR).as_quat()
+            t_vicon_to_UR = vicon_base_to_UR_base[:3, 3]
+            R_vicon_to_surf = vicon_base_to_surface[:3, :3]
+            q_vicon_to_surf = R.from_matrix(R_vicon_to_surf).as_quat()
+            t_vicon_to_surf = vicon_base_to_surface[:3, 3]
+            print(f"TF {vicon_base_frame} <- {ur_base_frame}:")
+            print(f" q={q_vicon_to_UR}")
+            print(f" t={t_vicon_to_UR}")
+            print(f"TF {vicon_base_frame} <- {surface_frame}:")
+            print(f" q={q_vicon_to_surf}")
+            print(f" t={t_vicon_to_surf}")
 
-        # UR_base -> actual_surface
-        UR_base_to_actual_surface = np.linalg.inv(vicon_base_to_UR_base) @ vicon_base_to_surface
+            # UR_base -> actual_surface (same expression you already use)
+            UR_base_to_actual_surface = np.linalg.inv(vicon_base_to_UR_base) @ vicon_base_to_surface
 
-        # Ideal surface frame: if not given, assume it's the same name as surface_frame
-        if ideal_surface_frame is None:
-            ideal_surface_frame = surface_frame
-
-        # UR_base -> ideal_surface and its inverse
-        UR_base_to_ideal_surface = tf_graph.lookup_transform(ideal_surface_frame, ur_base_frame)
-        ideal_surface_to_UR_base = np.linalg.inv(UR_base_to_ideal_surface)
-
-        # Now transform each CSV pose:
-        pos_tf = np.zeros_like(pos_ref)
-        quat_tf = np.zeros_like(quat_ref) if quat_ref is not None else None
-
-        for i in range(M):
-            T = np.eye(4)
-            T[:3, 3] = pos_ref[i]
-
-            if quat_ref is not None:
-                T[:3, :3] = R.from_quat(quat_ref[i]).as_matrix()
+            # Ideal surface: choose static or TF depending on flag
+            if linear_surface:
+                # Linear hardcoded ideal UR_base -> surface
+                UR_base_to_surface_static = _make_T_from_quat_trans(
+                    _FALLBACK_UR_BASE_TO_SURFACE_LINEAR_QUAT,
+                    _FALLBACK_UR_BASE_TO_SURFACE_LINEAR_TRANS,
+                )
+                UR_base_to_ideal_surface = UR_base_to_surface_static
+                
             else:
-                T[:3, :3] = np.eye(3)
+                #cylindrical
+                if ideal_surface_frame is None:
+                    ideal_surface_frame = surface_frame
 
-            # new_T = UR_base_to_actual_surface @ ideal_surface_to_UR_base @ T
-            new_T = UR_base_to_actual_surface @ ideal_surface_to_UR_base @ T
+                # UR_base -> ideal_surface and its inverse
+                try:
+                    
+                    UR_base_to_ideal_surface = tf_graph.lookup_transform(ideal_surface_frame, ur_base_frame)
+                    ideal_surface_to_UR_base = np.linalg.inv(UR_base_to_ideal_surface)
+                except Exception as e_tf_ideal:
+                    print(f"[WARN] TF lookup for ideal_surface_frame '{ideal_surface_frame}' failed ({e_tf_ideal}). "
+                          f"Falling back to CHIRP static UR_base -> surface.")                
+                    UR_base_to_surface_static = _make_T_from_quat_trans(
+                        _FALLBACK_UR_BASE_TO_SURFACE_CHIRP_QUAT,
+                        _FALLBACK_UR_BASE_TO_SURFACE_CHIRP_TRANS,
+                    )
+                    UR_base_to_ideal_surface = UR_base_to_surface_static
+            
+            print("surface to UR_base:")
+            R_UR_base_to_ideal = UR_base_to_ideal_surface[:3, :3]
+            q_UR_base_to_ideal = R.from_matrix(R_UR_base_to_ideal).as_quat()
+            t_UR_base_to_ideal = UR_base_to_ideal_surface[:3, 3]
+            print(f"TF {ideal_surface_frame} -> {ur_base_frame}:")
+            print(f" q={q_UR_base_to_ideal}")
+            print(f" t={t_UR_base_to_ideal}")  
 
-            pos_tf[i] = new_T[:3, 3]
-            if quat_tf is not None:
-                quat_tf[i] = R.from_matrix(new_T[:3, :3]).as_quat()
+            ideal_surface_to_UR_base = np.linalg.inv(UR_base_to_ideal_surface)
+            # R_UR_base_to_ideal = UR_base_to_ideal_surface[:3, :3]
+            # q_UR_base_to_ideal = R.from_matrix(R_UR_base_to_ideal).as_quat()
+            # t_UR_base_to_ideal = UR_base_to_ideal_surface[:3, 3]
+            # print(f"TF {ur_base_frame} -> {ideal_surface_frame}:")
+            # print(f" q={q_UR_base_to_ideal}")
+            # print(f" t={t_UR_base_to_ideal}")
 
-        # Use transformed positions as the reference for interpolation
-        pos_ref = pos_tf
-        # If/when you want orientation interpolation, quat_tf is ready here.
+        except Exception as e:
+            # For tf_static missing.
+            print(f"[WARN] TF_static missing: TF graph construction / lookup failed ({e}).")
+            
+           
+    # ------------------------------------------------------------------
+    # 2) Apply transforms to the CSV poses
+    # ------------------------------------------------------------------
+    pos_tf = np.zeros_like(pos_ref)
+    quat_tf = np.zeros_like(quat_ref) if quat_ref is not None else None
+
+    for i in range(M):
+        T = np.eye(4)
+        T[:3, 3] = pos_ref[i]
+
+        if quat_ref is not None:
+            T[:3, :3] = R.from_quat(quat_ref[i]).as_matrix()
+        else:
+            T[:3, :3] = np.eye(3)
+
+        # new_T = UR_base_to_actual_surface @ ideal_surface_to_UR_base @ T
+        new_T = UR_base_to_actual_surface @ ideal_surface_to_UR_base @ T
+
+        pos_tf[i] = new_T[:3, 3]
+        if quat_tf is not None:
+            quat_tf[i] = R.from_matrix(new_T[:3, :3]).as_quat()
+
+    # Use transformed positions as the reference for interpolation
+    pos_ref = pos_tf
 
     # ------------------------------------------------------------------
-    # 2) Interpolate transformed positions onto target_time_rel
+    # 3) Interpolate transformed positions onto target_time_rel
     # ------------------------------------------------------------------
-    # Parameter alpha in [0,1] over reference samples
     alpha_ref = np.linspace(0.0, 1.0, M, dtype=np.float64)
 
-    # Map target_time_rel to alpha_query in [0,1]
     t_min = float(target_time_rel[0])
     t_max = float(target_time_rel[-1])
     if t_max <= t_min:
@@ -777,7 +739,6 @@ def load_and_interpolate_reference_trajectory(
 
     alpha_query = (target_time_rel - t_min) / (t_max - t_min)
 
-    # Fit cubic splines in alpha and sample at alpha_query
     cs_x = CubicSpline(alpha_ref, pos_ref[:, 0], extrapolate=False)
     cs_y = CubicSpline(alpha_ref, pos_ref[:, 1], extrapolate=False)
     cs_z = CubicSpline(alpha_ref, pos_ref[:, 2], extrapolate=False)
@@ -791,10 +752,6 @@ def load_and_interpolate_reference_trajectory(
         "ref_time_rel": target_time_rel,
         "ref_position": pos_interp,
     }
-
-
-
-
 
 # =========================
 # Query helpers for joints
@@ -959,6 +916,32 @@ def plot_pose_overlay_6d(
     plt.tight_layout()
     plt.show()
 
+def plot_tcp_ref_delta(
+    time_rel: np.ndarray,
+    delta_pos: np.ndarray,
+    title: str = "Reference - TCP Position Error"
+):
+    """
+    Plot the delta between TCP position and reference position
+    for each axis x, y, z in a separate figure with 3 subplots.
+
+    delta_pos: (N,3) array where columns are [dx, dy, dz] = tcp - ref
+    """
+    fig, axes = plt.subplots(3, 1, sharex=True, figsize=(10, 6))
+    fig.suptitle(title)
+
+    labels = [r"Δx [m] (tcp - ref)", r"Δy [m] (tcp - ref)", r"Δz [m] (tcp - ref)"]
+
+    for i in range(3):
+        ax = axes[i]
+        ax.plot(time_rel, delta_pos[:, i])
+        ax.axhline(0.0, linestyle="--", linewidth=0.8)
+        ax.set_ylabel(labels[i])
+        ax.grid(True)
+
+    axes[-1].set_xlabel("time [s]")
+    plt.tight_layout()
+    plt.show()
 
 
 # =========================
@@ -995,6 +978,8 @@ def main():
     parser.add_argument("--ref-csv", default=None,
                         help="Optional CSV file with reference trajectory (t, x, y, z, quaternion wxyz). "
                              "Will be interpolated to the TCP time grid.")
+    parser.add_argument("--linear", action="store_true",
+                        help="Use hardcoded linear UR_base_to_surface static transform instead of default chirp surface.")
 
 
 
@@ -1074,16 +1059,31 @@ def main():
                 ref_data = load_and_interpolate_reference_trajectory(
                     args.ref_csv,
                     target_time_rel=tcp_pose_data["time_rel"],
-                    bag_path=args.bag_path,          # <--- pass bag dir here
-                    tf_time_offset=1.0,              # <--- snapshot ~1s after first /tf (tweak as needed)
+                    bag_path=args.bag_path,
+                    tf_time_offset=1.0,
                     vicon_base_frame="vicon_base",
                     ur_base_frame="UR_base",
                     surface_frame="surface",
-                    ideal_surface_frame=None,        # or "ideal_surface" if you have a distinct frame
+                    ideal_surface_frame=None,
+                    linear_surface=args.linear,  
                 )
                 all_data.update(ref_data)
                 print(f"[INFO] Reference position shape: {ref_data['ref_position'].shape}")
 
+                # --- Delta between reference and TCP pose (per-axis) ---
+                if tcp_pose_data is not None:
+                    tcp_pos = all_data["tcp_position"]       # (N,3)
+                    ref_pos = all_data["ref_position"]       # (N,3)
+
+                    # Be defensive in case of any subtle length mismatch
+                    N = min(tcp_pos.shape[0], ref_pos.shape[0])
+                    if N == 0:
+                        print("[WARN] No overlap between TCP and reference for delta computation.")
+                    else:
+                        # Δ = tcp - ref for each axis
+                        delta_pos = tcp_pos[:N, :] - ref_pos[:N, :]
+                        all_data["tcp_ref_delta_position"] = delta_pos
+                        print(f"[INFO] Delta (tcp - ref) position shape: {delta_pos.shape}")
 
         except RuntimeError as e:
             print(f"[WARN] TCP pose extraction skipped: {e}")
@@ -1174,6 +1174,16 @@ def main():
                     title=title_tcp,
                     ref_pos=ref_pos,
                 )
+                if "tcp_ref_delta_position" in all_data:
+                    delta_pos = all_data["tcp_ref_delta_position"]
+                    # Use matching time vector (truncate if needed)
+                    N_delta = delta_pos.shape[0]
+                    t_delta = tcp_pose_data["time_rel"][:N_delta]
+                    plot_tcp_ref_delta(
+                        t_delta,
+                        delta_pos,
+                        title="(TCP Position - Reference) Error (cmd → status window)",
+                    )
 
     finally:
         rclpy.shutdown()

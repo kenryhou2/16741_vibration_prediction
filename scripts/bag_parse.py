@@ -522,7 +522,8 @@ def load_and_interpolate_reference_trajectory(
     ur_base_frame: str = "UR_base",
     surface_frame: str = "surface",
     ideal_surface_frame: Optional[str] = None,
-    linear_surface: bool = False,  
+    linear_surface: bool = False,
+    aux_csv: bool = False
 ) -> Dict[str, np.ndarray]:
     """
     Load reference trajectory from CSV, optionally transform it using TF from a bag,
@@ -569,6 +570,7 @@ def load_and_interpolate_reference_trajectory(
             "ref_position": (N,3) array,  # transformed & interpolated XYZ
         }
     """
+
     if not os.path.isfile(csv_path):
         raise FileNotFoundError(f"Reference CSV '{csv_path}' not found.")
 
@@ -716,7 +718,11 @@ def load_and_interpolate_reference_trajectory(
             T[:3, :3] = np.eye(3)
 
         # new_T = UR_base_to_actual_surface @ ideal_surface_to_UR_base @ T
-        new_T = UR_base_to_actual_surface @ ideal_surface_to_UR_base @ T
+        if aux_csv is False:
+            new_T = UR_base_to_actual_surface @ ideal_surface_to_UR_base @ T
+        else:
+            #using auxiliary csv that is in vicon frame.
+            new_T = np.linalg.inv(vicon_base_to_UR_base) @ T
 
         pos_tf[i] = new_T[:3, 3]
         if quat_tf is not None:
@@ -980,7 +986,8 @@ def main():
                              "Will be interpolated to the TCP time grid.")
     parser.add_argument("--linear", action="store_true",
                         help="Use hardcoded linear UR_base_to_surface static transform instead of default chirp surface.")
-
+    parser.add_argument("--aux-csv", action="store_true",
+                        help="use auxilary csv file with different transform sequence.")
 
 
     args = parser.parse_args()
@@ -1065,8 +1072,11 @@ def main():
                     ur_base_frame="UR_base",
                     surface_frame="surface",
                     ideal_surface_frame=None,
-                    linear_surface=args.linear,  
+                    linear_surface=args.linear,
+                    aux_csv=args.aux_csv  
                 )
+                if args.aux_csv:
+                    print("[INFO] Using auxiliary csv transform sequence.")
                 all_data.update(ref_data)
                 print(f"[INFO] Reference position shape: {ref_data['ref_position'].shape}")
 
@@ -1084,6 +1094,7 @@ def main():
                         delta_pos = tcp_pos[:N, :] - ref_pos[:N, :]
                         all_data["tcp_ref_delta_position"] = delta_pos
                         print(f"[INFO] Delta (tcp - ref) position shape: {delta_pos.shape}")
+            
 
         except RuntimeError as e:
             print(f"[WARN] TCP pose extraction skipped: {e}")

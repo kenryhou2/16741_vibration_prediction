@@ -30,50 +30,63 @@ python3 bag_parse.py <rosbag_directory> \
 ```
 ---
 ## Usage notes per data run:
+From the scripts directory run the following:
 ```bash
-Data offsets; 
-
-Chirp 1: hkou@UBE-CARBON:~/Courses/16741_Manipulation_Erickson/project/16741_vibration_prediction/scripts$ python3 bag_parse.py ../data/../../data/data_collection_11252025/chirp1/rosbag2_2025_11_25-19_24_21 --start-offset -0.98 --end-offset 0.10823 --plot --output data_chirp1_11292025.npz --ref-csv ../data/chirp1/ref_traj_chirp_clean.csv --linear 
-
+Chirp 1: python3 bag_parse.py ../data/../../data/data_collection_11252025/chirp1/rosbag2_2025_11_25-19_24_21 --start-offset -0.98 --end-offset 0.10823 --plot --output data_chirp1_11292025.npz --ref-csv ../data/chirp1/ref_traj_chirp_clean.csv --linear 
 Start offset: -2 + 1.08 = -0.92 
-
 End Offset: 32.77067 - 31.8789 = 0.89177 = 1 – 0.89177= 0.10823 
 
- 
+Chirp 2: python3 bag_parse.py ../data/../../data/data_collection_11302025/chirp2/rosbag2_2025_11_30-02_02_18/ --start-offset -0.969 --end-offset 0.072 --plot --output data_chirp2_11302025.npz --ref-csv ../data/chirp2/ref_traj_chirp_clean.csv --linear 
+Start offset: -2 + 1.031 = −0.969 
+End Offset: 2 - (33.732 - 31.804) = 0.072 
 
- 
+AUX: Chirp3: python3 bag_parse.py ../data/../../data/data_collection_11302025/chirp3/rosbag2_2025_11_30-02_04_34/ --plot --output data_chirp3_11302025.npz --ref-csv ../data/chirp3/ref_traj_chirp3_clean_vicon_base.csv --start-offset .002 --end-offset 0.074 --aux-csv  
+Start offset: -2 + 2.002 = .002 
+End Offset: 2 - (34.728 - 32.802) = 0.074 
 
-[Deprecated] Cylinder1: hkou@UBE-CARBON:~/Courses/16741_Manipulation_Erickson/project/16741_vibration_prediction/scripts$ python3 bag_parse.py ../data/../../data/data_collection_11252025/cylinder_run1/rosbag2_2025_11_25-18_47_41/ --plot --output data_cylinder_11292025.npz --ref-csv ../data/cylinder1/ref_traj_cylinder_clean.csv --start-offset -0.92 --end-offset 0.02233  
+Cylinder1: python3 bag_parse.py ../data/../../data/data_collection_11302025/cylinder1/rosbag2_2025_11_30-02_09_09/ --plot --output data_cylinder1_11302025.npz --ref-csv ../data/cylinder1/ref_traj_cylinder_clean.csv --start-offset -0.9797 --end-offset 0.045 
+Start offset: -2 + 1.0203 = −0.9797 
+End offset: 2 – (17.56 - 15.605) = 0.045 
 
-Start offset: –2 + 1 = -1 
-
-End offset: 2 – 1.97767 = 0.02233 
-
-17.57887 - 15.6012 = 1.97767 
-
- 
-
- Cylinder2: hkou@UBE-CARBON:~/Courses/16741_Manipulation_Erickson/project/16741_vibration_prediction/scripts$ python3 bag_parse.py ../data/../../data/data_collection_11252025/cylinder_run2/rosbag2_2025_11_25-19_14_51/ --plot --output data_cylinder2_11292025.npz --ref-csv ../data/cylinder2/ref_traj_cylinder_clean.csv --start-offset -0.7974 --end-offset 0.02559 
-
+Cylinder2: python3 bag_parse.py ../data/../../data/data_collection_11252025/cylinder_run2/rosbag2_2025_11_25-19_14_51/ --plot --output data_cylinder2_11292025.npz --ref-csv ../data/cylinder2/ref_traj_cylinder_clean.csv --start-offset -0.7974 --end-offset 0.02559 
 Start offset: -2 + 1.1471 + 0.0555 = -0.7974 
-
 End offset: 2 - (17.675310 - 15.7009) = 0.02559 
 
- 
-
 Cylinder3: python3 bag_parse.py ../data/../../data/data_collection_11252025/cylinder_run3/rosbag2_2025_11_25-19_16_11/ --plot --output data_cylinder3_11292025.npz --ref-csv ../data/cylinder3/ref_traj_cylinder_clean.csv --start-offset 0.1545 --end-offset 0.005 
-
 Start offset: -2 + 2.017 + 0.087 0.0505= 0.1545 
-
 End offset: 2 - (18.56- 16.565) = 0.005 
 
- 
+Cylinder 4: python3 bag_parse.py ../data/../../data/data_collection_11302025/cylinder4/rosbag2_2025_11_30-02_36_13/ --plot --output data_cylinder4_11302025.npz --ref-csv ../data/cylinder4/ref_traj_cylinder_clean.csv --start-offset -0.8834 --end-offset 0.0557 
+Start offset: –2 + 1.0286 + 0.088= −0.8834 
+End offset: 2 – (17.5323 - 15.588) = 0.0557 
 
 Linear1: python3 bag_parse.py ../data/../../data/data_collection_11252025/linear_run1/rosbag2_2025_11_25-19_27_33/ --plot --output data_linear1_11292025.npz --ref-csv ../data/linear1/ref_traj_linear_clean.csv --start-offset -0.9717 --end-offset 0.0103 --linear 
-
 Start offset: -2 + 1.0283 = -0.9717 
-
 End offset: 2 - (18.0571- 16.0674) = 0.0103 
+
+AUX Linear 2: python3 bag_parse.py ../data/../../data/data_collection_11302025/linear2/rosbag2_2025_11_30-01_45_00/ --plot --output data_linear2_11302025.npz --ref-csv ../data/linear2/ref_traj_linear2_clean_vicon_base.csv --start-offset 0.0042 --end-offset 0.0976 --aux-csv 
+Start offset: -2 + 2.0042 = 0.0042 
+End offset: 2 - (19.0414- 17.139) = 0.0976 
+
+AUX Linear 3: python3 bag_parse.py ../data/../../data/data_collection_11302025/linear3/rosbag2_2025_11_30-01_48_51/ --plot --output data_linear3_11302025.npz --ref-csv ../data/linear3/ref_traj_linear3_clean_vicon_base.csv --start-offset -0.9821 --end-offset 0.0638 --aux-csv 
+Start offset: -2 + 1.0179 = −0.9821 
+End offset: 2 - (18.0522- 16.116) = 0.0638 
+
+AUX Roller Coaster1: python3 bag_parse.py ../data/../../data/data_collection_11302025/roller_coaster1/rosbag2_2025_11_30-02_52_14/ --plot --output data_rc1_11302025.npz --ref-csv ../data/rollercoaster1/ref_traj_rc1_clean_vicon_base.csv --start-offset -0.992 --end-offset 0.0986 --aux-csv 
+Start offset: -2 + 1.008 = -0.992 
+End offset: 2 - (31.4- 29.4986) = 0.0986 
+
+AUX Roller Coaster2: python3 bag_parse.py ../data/../../data/data_collection_11302025/roller_coaster2/rosbag2_2025_11_30-03_01_39/ --plot --output data_rc2_11302025.npz --ref-csv ../data/rollercoaster2/ref_traj_rc2_clean_vicon_base.csv --start-offset 0 --end-offset 0 --aux-csv 
+Start offset: -2 + 2 = 0 
+End offset: 2 - (32.4360- 30.494) = 0.058 -> 0 
+
+AUX Roller Coaster3: python3 bag_parse.py ../data/../../data/data_collection_11302025/roller_coaster3/rosbag2_2025_11_30-03_05_11/ --plot --output data_rc3_11302025.npz --ref-csv ../data/rollercoaster3/ref_traj_rc3_clean_vicon_base.csv --start-offset -0.9918 --end-offset 0.119 --aux-csv 
+Start offset: -2 + 1.0082 = -0.9918 
+End offset: 2 - (31.441- 29.56) = 0.119 
+
+AUX Roller Coaster4: python3 bag_parse.py ../data/../../data/data_collection_11302025/roller_coaster4/rosbag2_2025_11_30-03_07_10/ --plot --output data_rc4_11302025.npz --ref-csv ../data/rollercoaster4/ref_traj_rc4_clean_vicon_base.csv --start-offset -0.992 --end-offset 0.028 --aux-csv 
+Start offset: -2 + 1.008 = -0.992 
+End offset: 2 - (31.415- 29.443) = 0.028 
 ```
 ---
 
